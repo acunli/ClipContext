@@ -156,26 +156,26 @@ slash mismatch is enough to fail this).
 token was revoked or expired from disuse. This is expected occasionally;
 the UI prompts "Reconnect YouTube" — click it and redo the consent flow.
 
-## Deployment (Vercel / Railway)
+## Deployment (Vercel / Modal)
 
 **Vercel build fails immediately, "no Next.js project found" or similar**
 — **Settings → General → Root Directory** isn't set to `frontend`. This is
 a monorepo; Vercel needs to be told the Next.js app isn't at the repo
 root. See [Deployment.md](Deployment.md).
 
-**Railway deploy succeeds but the app returns 502 "Application failed to
-respond"** — check the target port in Railway's networking settings
-matches what the container actually binds. The Dockerfile's `CMD` honors
-`$PORT` if Railway injects one — if Railway's own `PORT` env var differs
-from a port you manually set elsewhere, the app binds to Railway's value,
-and the networking config needs to point at that same value, not a
-guessed one. Check the actual `Uvicorn running on http://0.0.0.0:<port>`
-line in the deploy logs to see what it really bound to.
+**`modal deploy` fails with "Secret 'clipcontext-backend' not found"** —
+create it first (`modal secret create clipcontext-backend --from-dotenv
+<prod.env>`), see [Deployment.md](Deployment.md#backend-modal).
 
-**Railway container repeatedly restarts / crash-loops** — check
-`restartPolicyMaxRetries` in `railway.toml` (currently 3) hasn't been
-exhausted, and check the logs for the bare `Killed` OOM signature above
-before assuming it's an application bug.
+**Modal backend returns 500 on every request, logs show `Missing required
+environment variables`** — the `clipcontext-backend` secret is missing
+`FIREWORKS_API_KEY`, `YOUTUBE_API_KEY`, or `GEMINI_API_KEY`. Recreate it
+with `--force` and redeploy (`make deploy-backend`).
+
+**A job 404s ("Job not found") after the tab sat idle** — the Modal
+container scaled to zero after 20 idle minutes (or was redeployed), and
+the in-memory job registry went with it. Re-upload; cached stages are
+recomputed. See [Deployment.md](Deployment.md#scale-to-zero-and-what-it-means).
 
 **Backend works locally but the deployed frontend can't reach it** — the
 deployed `NEXT_PUBLIC_API_BASE_URL` doesn't point at the deployed backend

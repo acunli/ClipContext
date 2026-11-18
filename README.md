@@ -278,9 +278,11 @@ Two independent storage layers, neither required for the core workflow:
 
 ## Deployment
 
-Frontend on Vercel, backend on any persistent container host (Railway,
-Render, or plain Docker-on-a-VM — **not** short-lived serverless, since
-the pipeline shells out to FFmpeg and writes job artifacts to local disk).
+Frontend on Vercel, backend on [Modal](https://modal.com) via
+`modal_app.py` (`make deploy-backend`). The `Dockerfile` also works on any
+other persistent container host (Render, Fly.io, a VM). It does **not** work
+on short-lived JS/edge functions, because the pipeline shells out to FFmpeg
+and writes job artifacts to local disk.
 The backend's job/session state is in-memory by design, which caps it at
 a single instance until shared state is added — and a small hosting
 plan's memory limit is a real, stated constraint for longer videos, not a
@@ -299,7 +301,7 @@ hidden one. Full guide, including that tradeoff in detail:
 | [docs/AMD.md](docs/AMD.md) | AMD GPU integration deep-dive |
 | [docs/Firebase.md](docs/Firebase.md) | Accounts, Firestore, setup from scratch |
 | [docs/YouTube.md](docs/YouTube.md) | OAuth setup, upload flow |
-| [docs/Deployment.md](docs/Deployment.md) | Vercel, Railway/Render/Docker, all the gotchas |
+| [docs/Deployment.md](docs/Deployment.md) | Vercel, Modal/Docker, all the gotchas |
 | [docs/Environment.md](docs/Environment.md) | Every environment variable |
 | [docs/DeveloperGuide.md](docs/DeveloperGuide.md) | Local dev, testing, conventions |
 | [docs/Troubleshooting.md](docs/Troubleshooting.md) | Fixes for common errors, by area |

@@ -128,17 +128,16 @@ after every stage; `JobRegistry.update_progress()` writes it into the
 reads the current `JobRecord` — there is no queue, no external process, no
 persistence layer between the HTTP request and this dict.
 
-Because this dict lives in one process's memory, `railway.toml` pins the
-deployment to a single replica, with the reasoning spelled out inline:
+Because this dict lives in one process's memory, `modal_app.py` pins the
+deployment to a single container (reasoning in its module docstring):
 
-```toml
-[deploy]
-# The job registry (src/api/jobs.py) and YouTube session/token stores are
-# in-memory — see README.md "Known limitations". Running more than one
-# replica would split job/session state across processes with no shared
-# backing store, so job polling and YouTube reconnects would randomly hit
-# the wrong instance. Keep this at 1 unless shared state is implemented.
-numReplicas = 1
+```python
+@app.function(
+    ...
+    max_containers=1,
+    scaledown_window=20 * 60,
+)
+@modal.concurrent(max_inputs=100)
 ```
 
 The same in-memory pattern, with the same single-replica constraint,
@@ -293,5 +292,5 @@ since they live in Firestore, not the job registry.
 - [API.md](API.md) — full endpoint reference, request/response shapes, error codes.
 - [AI-Pipeline.md](AI-Pipeline.md) — every pipeline stage in execution order.
 - [Frontend.md](Frontend.md) — the Next.js app that drives this backend.
-- [Deployment.md](Deployment.md) — how this is actually hosted (Railway, single replica).
+- [Deployment.md](Deployment.md) — how this is actually hosted (Modal, single container).
 - [AMD.md](AMD.md) — the AMD ROCm/vLLM hackathon integration in detail.

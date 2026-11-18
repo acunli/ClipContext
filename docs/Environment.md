@@ -101,7 +101,7 @@ Sane defaults are applied if unset; nothing here blocks startup.
 |---|---|---|---|
 | `ALLOWED_ORIGINS` | Optional | Comma-separated list of origins allowed to call the API (CORS). Defaults to a set of localhost ports (3000-3003). Set to the deployed frontend's origin in production. | `https://your-app.vercel.app` |
 | `MAX_UPLOAD_SIZE_MB` | Optional | Maximum accepted video upload size, in megabytes. Defaults to `200`. | `200` |
-| `PORT` | Optional | Port the FastAPI server binds to. Defaults to `8000`; hosts like Railway/Cloud Run inject this automatically. | `8000` |
+| `PORT` | Optional | Port the FastAPI server binds to. Defaults to `8000`; hosts like Cloud Run/Render inject this automatically; unused on Modal. | `8000` |
 | `WHISPER_MODEL_SIZE` | Optional | faster-whisper model size for local transcription (`src/ai/transcriber.py`). The code's actual default is `"tiny"` (the smallest available model) — chosen because `"small"` was observed to OOM-kill a memory-constrained deployment and even `"base"` reduced but did not eliminate intermittent OOM kills. Raise to `base`/`small`/`medium` only on a host with real memory headroom. See [Deployment.md](Deployment.md) for the full Railway memory discussion. | `base` |
 
 > Note: `.env.example`'s inline comment for `WHISPER_MODEL_SIZE` says the
@@ -158,7 +158,7 @@ credential needed there.
 
 | Variable | Required | Purpose | Example |
 |---|---|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | Yes | Base URL of the FastAPI backend the frontend calls. | `http://localhost:8000` (local) / `https://your-backend.up.railway.app` (production) |
+| `NEXT_PUBLIC_API_BASE_URL` | Yes | Base URL of the FastAPI backend the frontend calls. | `http://localhost:8000` (local) / `https://<modal-workspace>--clipcontext-api.modal.run` (production) |
 
 Remember: `NEXT_PUBLIC_*` variables are baked into the JavaScript bundle at
 `next build` time, not read live at runtime. Changing this in a hosting

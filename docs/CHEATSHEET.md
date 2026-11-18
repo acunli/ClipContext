@@ -88,7 +88,7 @@ curl https://<your-backend>/api/providers/status
 | AMD content generation | `AMD_VLLM_BASE_URL`, `AMD_VLLM_MODEL`, `CONTENT_GENERATION_PROVIDER=amd_vllm` |
 | YouTube connect/upload | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` |
 | ClipContext accounts | `FIREBASE_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS` (or `FIREBASE_SERVICE_ACCOUNT_JSON`), `NEXT_PUBLIC_FIREBASE_*` (6 vars) |
-| Cross-origin production (Vercel+Railway) | `COOKIE_SECURE=true`, `COOKIE_SAMESITE=none`, `ALLOWED_ORIGINS` |
+| Cross-origin production (Vercel+Modal) | `COOKIE_SECURE=true`, `COOKIE_SAMESITE=none`, `ALLOWED_ORIGINS` |
 
 Full reference: [Environment.md](Environment.md).
 

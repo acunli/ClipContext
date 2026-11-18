@@ -1,4 +1,4 @@
-.PHONY: setup backend frontend test lint build
+.PHONY: setup backend frontend test lint build deploy-backend
 
 PYTHON := python3.13
 
@@ -25,3 +25,7 @@ lint:
 
 build:
 	cd frontend && npm run build
+
+# Production backend on Modal (see docs/Deployment.md "Backend (Modal)").
+deploy-backend:
+	modal deploy modal_app.py

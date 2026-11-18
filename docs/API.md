@@ -50,7 +50,7 @@ given HTTP status code.
 
 ### `GET /health`
 
-**Purpose**: Liveness check (used by Railway's `healthcheckPath`).
+**Purpose**: Liveness check (fast, no dependency checks).
 **Auth**: None.
 **Request**: none.
 **Response** `200 HealthResponse`:

@@ -16,7 +16,7 @@ token.
 flowchart LR
     Browser["Browser"]
     FE["Next.js frontend\n(Vercel or any Node host)"]
-    BE["FastAPI backend\n(persistent container — Railway/Docker/VM)"]
+    BE["FastAPI backend\n(single container — Modal/Docker/VM)"]
     Fireworks["Fireworks AI\n(Kimi vision + text, MiniMax)"]
     AMD["AMD ROCm/vLLM\n(content_generation / discriminator only)"]
     Gemini["Gemini\n(vision fallback)"]
@@ -171,7 +171,7 @@ touching one of these areas should call it out explicitly:
   See [Firebase.md](Firebase.md) and [YouTube.md](YouTube.md).
 - **`src/api/jobs.py`'s job registry, and the YouTube session/state/token
   stores in `src/youtube/`, are in-memory by design** — this is why
-  `railway.toml` pins `numReplicas = 1`. Don't scale this backend
+  `modal_app.py` pins `max_containers=1`. Don't scale this backend
   horizontally without first adding shared state (Redis, a DB) for both.
 - **The YouTube upload video path is always resolved server-side from
   `job_id`**, never accepted as a client-supplied path.
@@ -184,11 +184,11 @@ touching one of these areas should call it out explicitly:
 ```mermaid
 flowchart LR
     User((User)) --> Vercel["Vercel\nNext.js frontend"]
-    Vercel --> Railway["Railway / Docker / VM\nFastAPI backend, single instance"]
-    Railway --> Fireworks2["Fireworks AI"]
-    Railway -.-> AMDNB["AMD notebook\nROCm/vLLM via Cloudflare Tunnel"]
-    Railway --> YTAPI["YouTube Data API"]
-    Railway -.-> Firestore["Firebase / Firestore"]
+    Vercel --> Backend2["Modal\nFastAPI backend, single container"]
+    Backend2 --> Fireworks2["Fireworks AI"]
+    Backend2 -.-> AMDNB["AMD notebook\nROCm/vLLM via Cloudflare Tunnel"]
+    Backend2 --> YTAPI["YouTube Data API"]
+    Backend2 -.-> Firestore["Firebase / Firestore"]
 ```
 
 Why "single instance" is load-bearing, not a suggestion: the job registry
@@ -196,7 +196,7 @@ Why "single instance" is load-bearing, not a suggestion: the job registry
 (`src/youtube/`) are in-memory. Running more than one backend replica
 splits that state across processes with no shared backing store, so job
 polling and YouTube reconnects would randomly hit the wrong instance —
-`railway.toml` pins `numReplicas = 1` for exactly this reason. Full
+`modal_app.py` pins `max_containers=1` for exactly this reason. Full
 deployment guide, including the real memory-constraint tradeoff on small
 hosting plans: [Deployment.md](Deployment.md).
 

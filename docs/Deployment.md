@@ -12,7 +12,7 @@ Data API) they talk to. For everything AMD-specific, see
 ```mermaid
 flowchart LR
     User["Browser"] --> Vercel["Vercel\n(Next.js frontend)"]
-    Vercel -->|"NEXT_PUBLIC_API_BASE_URL"| Backend["Railway / Render / Docker-on-a-VM\n(FastAPI backend, persistent container)"]
+    Vercel -->|"NEXT_PUBLIC_API_BASE_URL"| Backend["Modal\n(FastAPI backend, single container)"]
 
     Backend -->|"CONTENT_GENERATION_PROVIDER /\nDISCRIMINATOR_PROVIDER"| Inference
 
@@ -57,7 +57,7 @@ variable manager (not committed — see `frontend/.env.local.example`):
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | Yes | URL of the deployed backend, e.g. `https://your-backend.up.railway.app`. |
+| `NEXT_PUBLIC_API_BASE_URL` | Yes | URL of the deployed backend, e.g. `https://<modal-workspace>--clipcontext-api.modal.run`. |
 | `NEXT_PUBLIC_FIREBASE_API_KEY` | Only for ClipContext account login | Firebase web config. |
 | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Only for ClipContext account login | Firebase web config. |
 | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | Only for ClipContext account login | Firebase web config. |
@@ -83,39 +83,84 @@ Also set the backend's `ALLOWED_ORIGINS` to include the deployed frontend's
 Vercel origin (see [Environment.md](Environment.md)), or the browser will
 be blocked by CORS when calling the backend.
 
-## Backend (Railway / persistent container)
+## Backend (Modal)
 
-The backend **must** run on a persistent container host, not short-lived
-serverless functions. Per the comment at the top of the
-[`Dockerfile`](../Dockerfile):
+The production backend runs on [Modal](https://modal.com) via
+[`modal_app.py`](../modal_app.py) at the repo root. It serves the exact same
+`src.api.app:app` that `make backend` and the [`Dockerfile`](../Dockerfile)
+run — there is no Modal-specific business logic anywhere in `src/`.
 
-> Requires a persistent container host (not a short-lived serverless
-> function): the pipeline shells out to ffmpeg, writes job artifacts to
-> local disk, and runs long background jobs in-process.
+Why Modal (the backend previously ran on Railway, whose trial expired):
 
-The repo ships a [`Dockerfile`](../Dockerfile) (Python 3.13-slim, installs
-`ffmpeg` via apt, installs `requirements.txt`, copies `main.py` and `src/`,
-pre-creates the runtime data/output directories, and runs
-`uvicorn src.api.app:app` honoring `$PORT` if the host injects one) and a
-[`railway.toml`](../railway.toml) that points Railway at that Dockerfile.
+- **It's a real Python container**, not a short-lived JS/edge function: the
+  pipeline shells out to ffmpeg, writes job artifacts to local disk, runs
+  faster-whisper on CPU, and runs long background jobs in-process. Supabase
+  Edge Functions (Deno, small memory/time limits) and stateless Vercel
+  Functions can't host this without a rewrite.
+- **Free tier that doesn't expire**: Modal's Starter plan includes $30 of
+  compute per month, renewed monthly. The container scales to zero when
+  idle, so an idle backend costs nothing; a 2-core / 4 GiB container costs
+  roughly $0.13 per hour it's actually awake.
+- **Memory headroom**: 4 GiB instead of Railway's ~1 GB, which removes the
+  faster-whisper OOM problem described below.
+
+### One-time setup
 
 ```bash
-docker build -t clipcontext-backend .
-docker run -p 8000:8000 --env-file .env clipcontext-backend
+uv tool install modal          # or: pip install modal
+modal token new                # browser login, writes ~/.modal.toml
 ```
 
-### `numReplicas = 1` is required, not optional
+Create the `clipcontext-backend` secret that `modal_app.py` attaches. The
+easiest route is a production dotenv file kept **outside git** (never
+commit it), then:
 
-`railway.toml` pins `numReplicas = 1`, and this is a hard requirement of
-the current code, not a cost-saving default:
-
-```toml
-[deploy]
-numReplicas = 1
+```bash
+modal secret create clipcontext-backend --from-dotenv path/to/prod.env --force
 ```
 
-Two pieces of backend state are process-local, in-memory Python
-dictionaries with no shared backing store:
+It needs at least `FIREWORKS_API_KEY`, `YOUTUBE_API_KEY`, `GEMINI_API_KEY`
+(the process refuses to start without them), plus the production values
+below for CORS, YouTube OAuth, and Firebase:
+
+```
+ALLOWED_ORIGINS=https://<your-frontend-host>
+FRONTEND_URL=https://<your-frontend-host>
+GOOGLE_OAUTH_REDIRECT_URI=https://<your-backend-host>/api/youtube/callback
+COOKIE_SECURE=true
+COOKIE_SAMESITE=none
+FIREBASE_PROJECT_ID=...
+FIREBASE_SERVICE_ACCOUNT_JSON={...single-line service-account JSON...}
+```
+
+Use `FIREBASE_SERVICE_ACCOUNT_JSON`, not `GOOGLE_APPLICATION_CREDENTIALS` —
+the credentials file isn't shipped to the container. Re-run the
+`modal secret create ... --force` command after changing any value; a
+running container keeps its old environment until it restarts (redeploy,
+or let it scale to zero).
+
+### Deploy
+
+```bash
+make deploy-backend            # = modal deploy modal_app.py
+```
+
+The backend URL is stable across deploys:
+
+```
+https://<modal-workspace>--clipcontext-api.modal.run
+```
+
+Set that as `NEXT_PUBLIC_API_BASE_URL` in Vercel (and redeploy the
+frontend — see the build-time gotcha above). Logs: `modal app logs
+clipcontext-backend`, or the Modal dashboard.
+
+### `max_containers=1` is required, not optional
+
+`modal_app.py` pins `max_containers=1`, and this is a hard requirement of
+the current code, not a cost-saving default. Two pieces of backend state
+are process-local, in-memory Python dictionaries with no shared backing
+store:
 
 - **The job registry** (`src/api/jobs.py`, `JobRegistry`) — tracks every
   in-flight and completed job's status, stage, and progress, keyed by
@@ -125,122 +170,65 @@ dictionaries with no shared backing store:
   "Connect with YouTube" flow's session cookie binding, stored credentials,
   and CSRF state are all in-memory dicts keyed by an opaque session id.
 
-If Railway ran more than one replica, requests would be load-balanced
-across processes that don't share these dictionaries. A client polling
-`GET /api/jobs/{id}` could hit a different replica than the one that
-started the job and get a 404 as if the job never existed. A browser
-completing the YouTube OAuth callback could land on a replica that never
-saw the original `state` value or session, breaking the reconnect. This
-isn't a theoretical edge case — with more than one replica it happens
-routinely, since there's no session affinity guaranteed. Keep
-`numReplicas = 1` unless and until shared state (e.g. Redis-backed job
-registry and token store) is implemented.
+With more than one container, a client polling `GET /api/jobs/{id}` could
+hit a container that never saw the job and get a 404, and a browser
+completing the YouTube OAuth callback could land on a container that never
+saw the original `state`. Because only one container is allowed,
+`@modal.concurrent(max_inputs=100)` lets that container serve concurrent
+requests itself, the same way a single uvicorn process does. Keep this
+unless shared state (e.g. a Redis/Postgres-backed job registry and token
+store) is implemented.
 
-### The real memory constraint
+### Scale-to-zero and what it means
 
-This is a known, documented limitation — not a resolved one. State it
-plainly: Railway's free/starter tier commonly provisions around **1GB of
-RAM** per service. This backend's dependency footprint is heavy:
+The pipeline runs in a background thread started by `POST /api/jobs`; the
+container stays alive as long as requests keep arriving, and
+`scaledown_window` (20 minutes, Modal's maximum) after the last one. In
+practice:
 
-- `opencv-python` (video frame extraction) — needed early in every job, so
-  it's always resident by the time transcription runs regardless of import
-  timing.
-- `faster-whisper` / `ctranslate2` (local audio transcription) — the
-  stage that actually OOMs.
-- `pandas` + `scikit-learn` (trend analysis, runs *after* transcription)
-- `google-api-python-client`, `google-auth`, `google-auth-oauthlib`
-  (YouTube trends + OAuth/upload)
-- `firebase-admin` (Firestore/Authentication)
+- During processing the frontend polls `GET /api/jobs/{id}` every few
+  seconds, which keeps the container warm.
+- After ~20 idle minutes the container shuts down. In-memory job state,
+  YouTube connections, and the on-disk `outputs/_cache` are lost — the same
+  as a restart on any host. The next request cold-starts a fresh container
+  in a few seconds.
+- A redeploy also replaces the container, with the same effect.
 
-`pandas`, `scikit-learn`, and `firebase-admin` are only needed **after**
-transcription (trend analysis) or **only if** a request ever hits an
-account/artifact endpoint — they are never needed for the upload → process
-→ results path up to and including transcription. `src/trends/trend_analyzer.py`,
-`src/trends/worldwide_analyzer.py`, `src/models/discriminator/discriminator.py`,
-`src/firebase/admin.py`, `src/firebase/auth.py`, and `src/artifacts/repository.py`
-import them lazily (inside the specific functions that use them, with
-`from __future__ import annotations` + `TYPE_CHECKING` guards so type
-hints still work) rather than at module load — so they are **not** part of
-every process's boot-time memory footprint. Measured locally: importing
-`src.api.app` uses ~138MB RSS with these deferred vs. ~242MB with them
-eager — roughly 100MB of headroom recovered before any job even starts.
-(`google-api-python-client`/`google-auth-oauthlib` were deliberately left
-eager — they're pulled in unavoidably by the YouTube OAuth/upload route
-registration at boot regardless of where else they're imported, so
-deferring them elsewhere wouldn't reduce actual memory usage.)
+### Memory, and faster-whisper
 
-Loading everything above at process start, and then running
-`faster-whisper` transcription on a real video, can still push resident
-memory past a 1GB ceiling — the deferred imports reduce the baseline, they
-don't eliminate the ceiling. When OOM happens, the Linux OOM killer sends
-a SIGKILL to the process — the container just stops, and the Railway logs
-show a bare **"Killed"** with no Python traceback, no stack trace, nothing
-to grep for, immediately followed by a fresh `Started server process`
-line as the container restarts. If you see that, it is almost certainly
-the OOM killer, not an application bug — and since the job registry is
-in-memory (see above), the restart also means any in-flight job's
-`GET /api/jobs/{id}` now 404s ("Job not found"), even though the crash
-itself happened during transcription, not because of anything
-job-registry-specific.
+`modal_app.py` gives the container 2 CPU cores and 4 GiB of RAM. On
+Railway's ~1 GB plan, faster-whisper was the stage that got OOM-killed:
+`"small"` (~244M params) killed the process outright and even `"base"`
+(~74M) did intermittently, which is why `DEFAULT_WHISPER_MODEL_SIZE` in
+`src/ai/transcriber.py` is `"tiny"`. With 4 GiB you can set
+`WHISPER_MODEL_SIZE=base` or `small` in the secret for better transcripts.
+Only `tiny` is baked into the image, so a larger model is downloaded the
+first time each fresh container transcribes.
 
-Real mitigations that already exist in the code:
+The deferred heavy imports (`pandas`, `scikit-learn`, `firebase-admin` are
+imported inside the functions that use them — see `src/trends/`,
+`src/firebase/`, `src/artifacts/repository.py`) still keep the boot-time
+footprint at ~138 MB, which also shortens cold starts.
 
-1. **Deferred heavy imports** (above) — reduces the boot-time baseline
-   that stacks with a real transcription job's peak usage.
-2. **`WHISPER_MODEL_SIZE`** — controls which faster-whisper model
-   `src/ai/transcriber.py` loads. The code's actual default (`DEFAULT_WHISPER_MODEL_SIZE`
-   in `src/ai/transcriber.py`) is `"tiny"` (~39M params), the smallest
-   available faster-whisper model — chosen specifically because `"small"`
-   (~244M params) was observed to OOM-kill a memory-constrained Railway
-   deployment outright, and even `"base"` (~74M params) reduced but did not
-   eliminate intermittent OOM kills. In other words: on a 1GB plan, even the
-   smallest reasonable transcription model is a mitigation, not a
-   guarantee. Raise `WHISPER_MODEL_SIZE` to `base`/`small`/`medium` only on
-   a host with meaningfully more memory headroom, where transcript accuracy
-   matters more than staying under a tight limit.
-3. **Run the backend locally for demo purposes.** `make backend` runs the
-   same FastAPI app with `uvicorn --reload` against your laptop's own RAM,
-   which is not the constraint a 1GB cloud plan is. For a hackathon demo or
-   local development, this sidesteps the memory ceiling entirely.
+If the process ever is OOM-killed on any host, the log shows a bare
+**"Killed"** with no Python traceback, followed by the server starting
+again. Any in-flight job's `GET /api/jobs/{id}` then returns 404 ("Job not
+found") because the in-memory registry restarted with it.
 
-None of these raise the actual ceiling — they lower what's competing for
-space under it. On a video long/loud enough, OOM is still possible on a
-1GB plan.
-
-The real fix for production use is to **upgrade the Railway plan's memory
-allocation** so the process has real headroom above its boot-time import
-cost plus a real transcription job's peak usage. Alternatives to Railway
-that are equally viable, since the only hard requirement is a persistent
-container (not a specific vendor): **Render** (persistent web service, same
-Dockerfile) and **plain Docker on a VM** (any host that can run
-`docker run` and keep the container alive — a small VPS, an EC2/GCE
-instance, etc.). Whichever host you choose, it must give the container
-enough memory to survive its own boot-time imports plus a real
-transcription job; sizing that correctly is the actual fix, not a
-workaround.
-
-### Backend environment and health check
-
-`railway.toml` also configures:
-
-```toml
-healthcheckPath = "/health"
-healthcheckTimeout = 100
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 3
-```
+### Health check
 
 `GET /health` returns a simple `{"status": "ok"}` with no live dependency
 checks — it's meant for fast liveness polling, not diagnosing provider
 reachability. Use `GET /api/providers/status` (see [AMD.md](AMD.md)) to
 check whether Fireworks/AMD vLLM are actually reachable.
 
-Set the backend's required and optional environment variables per
-[Environment.md](Environment.md). At minimum, `FIREWORKS_API_KEY`,
-`YOUTUBE_API_KEY`, and `GEMINI_API_KEY` must be set or the process refuses
-to start (`src/config.py`'s `validate_environment()` raises at import time).
-
 ## Docker (general)
+
+The [`Dockerfile`](../Dockerfile) is the alternative to Modal for any
+persistent container host (Render, Fly.io, Cloud Run, a VM with `docker run`).
+Modal itself doesn't use it — `modal_app.py` builds an equivalent image.
+On any such host, run exactly **one** instance (see `max_containers=1`
+above) with comfortably more than 1 GB of RAM.
 
 `.dockerignore` excludes `.venv/`, `data/`, `outputs/`, `tests/`,
 `frontend/`, and local dotfiles/docs from the build context, so the image
@@ -250,9 +238,9 @@ passed at runtime via environment variables (`--env-file .env` for local
 `docker run`, or the host's environment-variable manager in production).
 
 The image exposes port 8000 and honors `$PORT` if the host injects one
-(Cloud Run, Railway, Fly.io, etc.), defaulting to 8000 for a plain
+(Cloud Run, Render, Fly.io, etc.), defaulting to 8000 for a plain
 `docker run`. In production, the backend and frontend are deployed as two
-separate services on two separate hosts (Vercel + Railway/Render/a VM) —
+separate services on two separate hosts (Vercel + Modal, or Vercel + another container host) —
 `docker-compose.yml` at the repo root is for **local development only**
 (`docker compose up --build` runs both with hot-reload; see
 [DeveloperGuide.md](DeveloperGuide.md)), not a production orchestration
@@ -261,7 +249,7 @@ setup.
 ## YouTube OAuth in production
 
 If the frontend and backend are on different origins (the normal case:
-Vercel + Railway), the YouTube OAuth session cookie needs cross-site cookie
+Vercel + Modal), the YouTube OAuth session cookie needs cross-site cookie
 settings:
 
 ```
@@ -296,7 +284,7 @@ Register the production `GOOGLE_OAUTH_REDIRECT_URI` as a second
    the gotcha above).
 3. On the backend host, set `FIREBASE_PROJECT_ID` and provide Admin
    credentials: `FIREBASE_SERVICE_ACCOUNT_JSON` (inline JSON — the only
-   option on hosts like Railway/Render that don't support mounted files) or
+   option on hosts like Modal/Render that don't support mounted files) or
    `GOOGLE_APPLICATION_CREDENTIALS` (a file path — only useful if the
    backend runs somewhere that supports file mounts). If the backend runs
    on Cloud Run/GCE/GKE with an attached service account, both can be left
@@ -308,7 +296,7 @@ Only relevant if `CONTENT_GENERATION_PROVIDER` or `DISCRIMINATOR_PROVIDER`
 is set to `amd_vllm` on the backend. See [AMD.md](AMD.md) for the full
 integration writeup and [`amd/README.md`](../amd/README.md) for the
 notebook-side setup. In short: `AMD_VLLM_BASE_URL`, `AMD_VLLM_MODEL`, and
-`AMD_VLLM_API_KEY` are set only in the backend's own environment (Railway),
+`AMD_VLLM_API_KEY` are set only in the backend's own environment (the Modal secret),
 never in the frontend, and the AMD notebook's Cloudflare Tunnel URL is
 ephemeral — it must be refreshed and re-verified (`GET /api/providers/status`)
 before each demo, not assumed to still be live from an earlier session.
