@@ -46,7 +46,18 @@ class JobRegistry:
             existing = self._jobs.get(job_id)
 
             if existing is not None:
-                return existing, False
+                with existing.lock:
+                    failed = existing.status == JobStatus.FAILED
+
+                # job_id is deterministic (video hash + handle + platform),
+                # so re-uploading the same video after a failure maps to the
+                # same id. Returning the failed record would make "Please try
+                # again" a dead end until the process restarts; replace it so
+                # the caller starts a fresh run. A failed record's worker
+                # thread has already exited (set_error is its last action),
+                # so nothing else writes to the old record.
+                if not failed:
+                    return existing, False
 
             record = JobRecord(job_id=job_id)
             self._jobs[job_id] = record

@@ -18,6 +18,36 @@ def test_get_or_create_returns_new_record_once():
     assert record_a.status == JobStatus.QUEUED
 
 
+def test_get_or_create_replaces_failed_record_so_retry_restarts():
+    registry = JobRegistry()
+    failed_record, _ = registry.get_or_create("job-1")
+    registry.set_error("job-1", "boom")
+
+    retry_record, created = registry.get_or_create("job-1")
+
+    assert created is True
+    assert retry_record is not failed_record
+    assert retry_record.status == JobStatus.QUEUED
+    assert retry_record.error is None
+    assert registry.get("job-1") is retry_record
+
+
+def test_get_or_create_keeps_in_progress_and_completed_records():
+    registry = JobRegistry()
+    processing, _ = registry.get_or_create("job-processing")
+    registry.update_progress(
+        "job-processing",
+        stage=PipelineStage.TRANSCRIBING,
+        progress=32,
+        message="Transcribing audio",
+    )
+    completed, _ = registry.get_or_create("job-completed")
+    registry.set_result("job-completed", result="x")
+
+    assert registry.get_or_create("job-processing") == (processing, False)
+    assert registry.get_or_create("job-completed") == (completed, False)
+
+
 def test_update_progress_transitions_to_processing():
     registry = JobRegistry()
     registry.get_or_create("job-1")
