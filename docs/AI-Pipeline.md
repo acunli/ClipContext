@@ -139,7 +139,7 @@ each window it:
 **What it does**: `src/ai/fireworks/multimodal.py`'s
 `analyse_visual_window()` sends each window's selected frames (base64
 data-URLs) plus a strict "describe only visible evidence" prompt to
-**Fireworks-hosted Kimi** (`accounts/fireworks/routers/kimi-k2p6-turbo`,
+**Fireworks-hosted Kimi** (`accounts/fireworks/routers/kimi-k3-fast`,
 `src/ai/fireworks/client.py`'s `MODEL_ID`), `temperature=0.0`. Runs once
 per window, sequentially, reporting progress per window
 (`"Analysing visual window {i}/{n}"`). Windows with no frames skip the API
@@ -256,7 +256,7 @@ handle to a channel id (`channels.list(forHandle=...)`, falling back to
 `search.list`), pulls that channel's top-viewed 30-120s videos
 (`fetch_creator_trends()`), clusters them the same way as Stage 8, and
 compiles a per-creator style profile via Fireworks MiniMax — here using
-`accounts/fireworks/models/minimax-m2p7` (`MINMAX_ID` from
+`accounts/fireworks/models/minimax-m3` (`MINMAX_ID` from
 `src/ai/fireworks/client.py`, a **different** MiniMax id than
 `worldwide_analyzer.py`'s local constant; see below). Written to
 `outputs/<job_id>/trends/yt_trends.json` and
@@ -282,7 +282,7 @@ evidence) plus the chosen platform syntax, then calls
 descriptions / 10 hashtag sets in fixed lane/format/strategy order,
 `temperature=0.8`, `max_tokens=6000`. This is one of the two stages
 routable to AMD vLLM — see "Provider abstraction" below. Default model on
-Fireworks is `accounts/fireworks/routers/kimi-k2p6-turbo`
+Fireworks is `accounts/fireworks/routers/kimi-k3-fast`
 (`DEFAULT_MODEL`). Written to `outputs/<job_id>/generated_content.json`.
 
 **Output** — `GeneratedContent` (`src/models/generated_content.py`),
@@ -307,7 +307,7 @@ The system prompt (`src/models/discriminator/d_prompt.txt`) instructs the
 model to rank titles, descriptions, and hashtag sets **independently** —
 rank 1 in `titles` implies nothing about rank 1 in `descriptions`. This is
 the second (and last) stage routable to AMD vLLM. Fireworks model is
-`accounts/fireworks/models/minimax-m2p7` (`MINMAX_ID`). Written to
+`accounts/fireworks/models/minimax-m3` (`MINMAX_ID`). Written to
 `outputs/<job_id>/audit_report.json`.
 
 **Output** — `DiscriminatorResult` (`src/models/discriminator/schemas.py`),
@@ -330,8 +330,8 @@ pydantic-validated to require ranks 1-10 with no duplicates per pool:
   "generated_content": { "titles": [...], "descriptions": [...], "hashtags": [...] },
   "rankings": { "titles": [...], "descriptions": [...], "hashtags": [...] },
   "ai_audit": [
-    { "stage": "content_generation", "provider_requested": "fireworks", "provider_used": "fireworks", "model": "accounts/fireworks/routers/kimi-k2p6-turbo", "hardware": "Fireworks-hosted inference", "latency_ms": 4231.7, "fallback_used": false, "fallback_reason": null },
-    { "stage": "discriminator", "provider_requested": "fireworks", "provider_used": "fireworks", "model": "accounts/fireworks/models/minimax-m2p7", "hardware": "Fireworks-hosted inference", "latency_ms": 2870.2, "fallback_used": false, "fallback_reason": null }
+    { "stage": "content_generation", "provider_requested": "fireworks", "provider_used": "fireworks", "model": "accounts/fireworks/routers/kimi-k3-fast", "hardware": "Fireworks-hosted inference", "latency_ms": 4231.7, "fallback_used": false, "fallback_reason": null },
+    { "stage": "discriminator", "provider_requested": "fireworks", "provider_used": "fireworks", "model": "accounts/fireworks/models/minimax-m3", "hardware": "Fireworks-hosted inference", "latency_ms": 2870.2, "fallback_used": false, "fallback_reason": null }
   ]
 }
 ```
@@ -389,7 +389,7 @@ Hardware/AMD setup, model selection, and benchmark notes are covered in
 
 `src/trends/trend_analyzer.py` (creator trends) and
 `src/models/discriminator/discriminator.py` both import `MINMAX_ID`
-(`accounts/fireworks/models/minimax-m2p7`) from
+(`accounts/fireworks/models/minimax-m3`) from
 `src/ai/fireworks/client.py`. `src/trends/worldwide_analyzer.py` instead
 defines its own local `MINIMAX_MODEL_ID = "accounts/fireworks/models/minimax-m3"`
 and does not import the shared constant. Both are real, currently-used

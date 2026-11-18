@@ -10,7 +10,7 @@ from src.prompts.content_generation import (
 )
 
 
-DEFAULT_MODEL = "accounts/fireworks/routers/kimi-k2p6-turbo"
+DEFAULT_MODEL = "accounts/fireworks/routers/kimi-k3-fast"
 
 STAGE = "content_generation"
 

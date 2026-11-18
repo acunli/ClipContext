@@ -8,10 +8,10 @@ load_dotenv()
 
 
 MODEL_ID = (
-    "accounts/fireworks/routers/kimi-k2p6-turbo"
+    "accounts/fireworks/routers/kimi-k3-fast"
 )
 
-MINMAX_ID = "accounts/fireworks/models/minimax-m2p7"
+MINMAX_ID = "accounts/fireworks/models/minimax-m3"
 
 BASE_URL = (
     "https://api.fireworks.ai/inference/v1"
